@@ -6,6 +6,10 @@
     cfg.supabaseAnonKey && !cfg.supabaseAnonKey.startsWith('COLE_') && window.supabase;
   let db, timer, isRefreshing = false, dashboard = { docks: [], tickets: [] };
   let lastTrackingStatus = null;
+  let adminAlertsInitialized = false;
+  let adminAlertsEnabled = localStorage.getItem('dockflow_admin_alerts') === '1';
+  let adminAudioContext = null;
+  const adminKnownWaitingIds = new Set();
   const storageKey = 'dockflow_tracking_token';
   const viewNames = ['config', 'checkin', 'tracking', 'login', 'admin'];
   const show = name => viewNames.forEach(v => $(`${v}-view`).classList.toggle('hidden', v !== name));
@@ -20,6 +24,133 @@
   const element = (tag, className, value) => { const el=document.createElement(tag); if(className) el.className=className; if(value != null) el.textContent=String(value); return el; };
   const button = (label, action, kind='secondary') => { const b=element('button', `button ${kind} compact`, label); b.type='button'; b.addEventListener('click',action); return b; };
   const clearTimer = () => { if(timer) window.clearInterval(timer); timer=null; };
+
+  function updateAdminAlertButton() {
+    const b = $('admin-alert-toggle');
+    if (!b) return;
+    if (adminAlertsEnabled) {
+      b.textContent = 'Alertas ativos';
+      b.classList.add('alert-enabled');
+      b.title = 'Som e notificações de novos check-ins estão ativados neste navegador.';
+    } else {
+      b.textContent = 'Ativar alertas';
+      b.classList.remove('alert-enabled');
+      b.title = 'Clique para ativar som e notificações de novos check-ins.';
+    }
+  }
+
+  function setupAdminAlerts() {
+    const head = document.querySelector('.admin-head');
+    const logout = $('logout');
+    if (!head || !logout) return;
+    let actions = head.querySelector('.admin-actions');
+    if (!actions) {
+      actions = element('div', 'admin-actions');
+      head.append(actions);
+      actions.append(logout);
+    }
+    if (!$('admin-alert-toggle')) {
+      const toggle = button('Ativar alertas', activateAdminAlerts, 'secondary');
+      toggle.id = 'admin-alert-toggle';
+      actions.insertBefore(toggle, logout);
+    }
+    updateAdminAlertButton();
+  }
+
+  async function activateAdminAlerts() {
+    adminAlertsEnabled = true;
+    localStorage.setItem('dockflow_admin_alerts', '1');
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx && !adminAudioContext) adminAudioContext = new AudioCtx();
+      if (adminAudioContext?.state === 'suspended') await adminAudioContext.resume();
+    } catch (_) {}
+    try {
+      if ('Notification' in window && Notification.permission === 'default') {
+        await Notification.requestPermission();
+      }
+    } catch (_) {}
+    updateAdminAlertButton();
+    showAdminToast({first_name:'DockFlow', last_name:'', plate:'', number:''}, true);
+  }
+
+  function playAdminBeep() {
+    if (!adminAlertsEnabled) return;
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      if (!adminAudioContext) adminAudioContext = new AudioCtx();
+      if (adminAudioContext.state === 'suspended') return;
+      const ctx = adminAudioContext;
+      const now = ctx.currentTime;
+      [[0,880],[0.22,660]].forEach(([offset,freq]) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + offset);
+        gain.gain.setValueAtTime(0.0001, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.18, now + offset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.16);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now + offset); osc.stop(now + offset + 0.18);
+      });
+    } catch (_) {}
+  }
+
+  function showAdminToast(ticket, activationOnly=false) {
+    const toast = element('div', 'admin-checkin-alert');
+    const close = element('button', 'admin-alert-close', '×');
+    close.type = 'button';
+    close.setAttribute('aria-label','Fechar alerta');
+    close.addEventListener('click',()=>toast.remove());
+    const title = element('strong', '', activationOnly ? 'Alertas ativados' : 'Novo motorista na fila');
+    const body = element('p', '', activationOnly
+      ? 'Quando houver um novo check-in, este painel exibirá um aviso e tentará tocar um som.'
+      : `Senha ${String(ticket.number).padStart(4,'0')} · ${ticket.first_name} ${ticket.last_name} · ${ticket.plate}`);
+    toast.append(close,title,body);
+    if (!activationOnly) {
+      toast.addEventListener('click', e=>{
+        if (e.target === close) return;
+        $('queue-list')?.scrollIntoView({behavior:'smooth',block:'center'});
+      });
+    }
+    document.body.append(toast);
+    requestAnimationFrame(()=>toast.classList.add('show'));
+    window.setTimeout(()=>{
+      toast.classList.remove('show');
+      window.setTimeout(()=>toast.remove(),350);
+    }, activationOnly ? 5000 : 12000);
+  }
+
+  function notifyAdminNewCheckin(ticket) {
+    showAdminToast(ticket);
+    playAdminBeep();
+    document.title = `NOVO CHECK-IN — ${ticket.plate} | DockFlow`;
+    window.setTimeout(()=>{
+      if (document.title.startsWith('NOVO CHECK-IN')) document.title = 'Painel de docas | DockFlow';
+    }, 9000);
+    if (adminAlertsEnabled && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        const n = new Notification('Novo motorista na fila', {
+          body: `Senha ${String(ticket.number).padStart(4,'0')} · ${ticket.first_name} ${ticket.last_name} · ${ticket.plate}`,
+          tag: `dockflow-${ticket.id}`
+        });
+        n.onclick = () => { window.focus(); $('queue-list')?.scrollIntoView({behavior:'smooth',block:'center'}); n.close(); };
+      } catch (_) {}
+    }
+  }
+
+  function detectNewAdminCheckins(data) {
+    const waiting = (data?.tickets || []).filter(t=>t.status === 'waiting');
+    if (!adminAlertsInitialized) {
+      waiting.forEach(t=>adminKnownWaitingIds.add(t.id));
+      adminAlertsInitialized = true;
+      return;
+    }
+    const newTickets = waiting.filter(t=>!adminKnownWaitingIds.has(t.id));
+    waiting.forEach(t=>adminKnownWaitingIds.add(t.id));
+    newTickets.forEach(notifyAdminNewCheckin);
+  }
 
   function announceCall(dock) {
     if (navigator.vibrate) {
@@ -112,6 +243,7 @@
     try {
       const {data,error:rpcError}=await db.rpc('admin_dashboard');
       if(rpcError)throw rpcError;
+      detectNewAdminCheckins(data);
       dashboard=data;renderAdmin();error('admin-error',null);
       $('last-update').textContent=`Última atualização: ${new Date().toLocaleTimeString('pt-BR')}`;
     } catch(err){error('admin-error',cleanError(err));}
@@ -167,7 +299,7 @@
     else $('qrcode').textContent='Não foi possível carregar o QR Code. Use o link acima.';
   }
 
-  function openAdmin(){history.replaceState(null,'','?admin=1');show('admin');clearTimer();makeQR();refreshAdmin();timer=window.setInterval(refreshAdmin,5000);}
+  function openAdmin(){history.replaceState(null,'','?admin=1');show('admin');clearTimer();setupAdminAlerts();makeQR();refreshAdmin();timer=window.setInterval(refreshAdmin,5000);}
 
   async function boot() {
     if(!ready){show('config');return;}
@@ -178,7 +310,7 @@
     $('resume-link').addEventListener('click',e=>{e.preventDefault();const token=localStorage.getItem(storageKey);if(token)routeToTracking(token);else error('checkin-error','Não encontramos uma senha salva neste celular. Se já fez check-in, use o link da sua senha.');});
     $('login-form').addEventListener('submit',login);
     $('admin-refresh').addEventListener('click',refreshAdmin);
-    $('logout').addEventListener('click',async()=>{clearTimer();await db.auth.signOut();history.replaceState(null,'','?admin=1');show('login');});
+    $('logout').addEventListener('click',async()=>{clearTimer();adminAlertsInitialized=false;adminKnownWaitingIds.clear();await db.auth.signOut();history.replaceState(null,'','?admin=1');show('login');});
     $('print-qr').addEventListener('click',()=>window.print());
     const params=new URLSearchParams(location.search),token=params.get('ticket');
     if(params.has('admin')){

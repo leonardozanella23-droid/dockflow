@@ -5,6 +5,7 @@
   const ready = /^https:\/\//.test(cfg.supabaseUrl || '') &&
     cfg.supabaseAnonKey && !cfg.supabaseAnonKey.startsWith('COLE_') && window.supabase;
   let db, timer, isRefreshing = false, dashboard = { docks: [], tickets: [] };
+  let lastTrackingStatus = null;
   const storageKey = 'dockflow_tracking_token';
   const viewNames = ['config', 'checkin', 'tracking', 'login', 'admin'];
   const show = name => viewNames.forEach(v => $(`${v}-view`).classList.toggle('hidden', v !== name));
@@ -12,19 +13,56 @@
   const setLoading = (id, yes, text) => { $(id).disabled = yes; if (text) $(id).textContent = text; };
   const cleanError = err => {
     const s = err?.message || 'Não foi possível concluir. Tente novamente.';
-    if (/failed to fetch|network|fetch failed/i.test(s)) return 'Falha de conexão. Verifique sua internet e tente novamente.';
+    if (/failed to fetch|network|fetch failed|ERR_EMPTY_RESPONSE/i.test(s)) return 'Falha de conexão. Verifique sua internet e tente novamente.';
     return s;
   };
   const fmtTime = t => t ? new Date(t).toLocaleString('pt-BR', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit',timeZone:'America/Sao_Paulo'}) : '—';
   const element = (tag, className, value) => { const el=document.createElement(tag); if(className) el.className=className; if(value != null) el.textContent=String(value); return el; };
   const button = (label, action, kind='secondary') => { const b=element('button', `button ${kind} compact`, label); b.type='button'; b.addEventListener('click',action); return b; };
   const clearTimer = () => { if(timer) window.clearInterval(timer); timer=null; };
+
+  function announceCall(dock) {
+    if (navigator.vibrate) {
+      try { navigator.vibrate([500, 180, 500, 180, 900]); } catch (_) {}
+    }
+    document.title = `CHAMADO — ${dock || 'Doca'} | DockFlow`;
+  }
+
+  function setTrackingAppearance(status, dock) {
+    const view = $('tracking-view');
+    view.classList.toggle('called-screen', status === 'called');
+    view.classList.toggle('done-screen', status === 'done');
+    view.classList.toggle('cancelled-screen', status === 'cancelled');
+
+    if (status === 'called') {
+      $('ticket-status').textContent = 'VOCÊ FOI CHAMADO';
+      $('ticket-status').className = 'pill active call-pill';
+      $('ticket-message').textContent = `DIRIJA-SE À ${String(dock || 'DOCA INDICADA').toUpperCase()}`;
+    } else if (status === 'done') {
+      $('ticket-status').textContent = 'ATENDIMENTO CONCLUÍDO';
+      $('ticket-status').className = 'pill done';
+      $('ticket-message').textContent = 'Seu atendimento foi encerrado. Obrigado!';
+      document.title = 'Atendimento concluído | DockFlow';
+    } else if (status === 'cancelled') {
+      $('ticket-status').textContent = 'CHECK-IN CANCELADO';
+      $('ticket-status').className = 'pill done';
+      $('ticket-message').textContent = 'Seu check-in foi cancelado. Procure a portaria.';
+      document.title = 'Check-in cancelado | DockFlow';
+    } else {
+      $('ticket-status').textContent = 'AGUARDANDO';
+      $('ticket-status').className = 'pill';
+      $('ticket-message').textContent = 'Você está na fila. Esta página atualiza automaticamente.';
+      document.title = 'Aguardando chamada | DockFlow';
+    }
+  }
+
   function routeToTracking(token) {
     localStorage.setItem(storageKey,token);
     history.replaceState(null,'',`?ticket=${encodeURIComponent(token)}`);
-    show('tracking'); clearTimer(); refreshTracking(token);
+    show('tracking'); clearTimer(); lastTrackingStatus = null; refreshTracking(token);
     timer=window.setInterval(()=>refreshTracking(token),8000);
   }
+
   async function refreshTracking(token) {
     const {data,err,error:rpcError}=await db.rpc('driver_status',{p_token:token});
     if (err||rpcError){error('tracking-error',cleanError(err||rpcError));return;}
@@ -34,12 +72,17 @@
     $('ticket-plate').textContent=data.plate;
     $('ticket-position').textContent=data.position || '—';
     $('ticket-dock').textContent=data.dock || '—';
-    const states={waiting:['Aguardando','Você está na fila. Esta página atualiza automaticamente.',''],called:['Chamado',`Dirija-se à ${data.dock||'doca indicada'}.`,'active'],done:['Concluído','Seu atendimento foi encerrado. Obrigado!','done'],cancelled:['Cancelado','Seu check-in foi cancelado. Procure a portaria.','done']};
-    const state=states[data.status]||states.waiting;
-    $('ticket-status').textContent=state[0]; $('ticket-status').className=`pill ${state[2]}`;
-    $('ticket-message').textContent=state[1];
-    if(data.status==='done'||data.status==='cancelled') { localStorage.removeItem(storageKey);clearTimer(); }
+
+    if (data.status === 'called' && lastTrackingStatus !== 'called') announceCall(data.dock);
+    setTrackingAppearance(data.status, data.dock);
+    lastTrackingStatus = data.status;
+
+    if(data.status==='done'||data.status==='cancelled') {
+      localStorage.removeItem(storageKey);
+      clearTimer();
+    }
   }
+
   async function checkIn(event) {
     event.preventDefault();error('checkin-error','');
     const first=$('first-name').value.trim(),last=$('last-name').value.trim();
@@ -53,14 +96,16 @@
     if(rpcError){error('checkin-error',cleanError(rpcError));return;}
     routeToTracking(data.tracking_token);
   }
+
   async function login(event) {
     event.preventDefault();error('login-error','');setLoading('login-submit',true,'Entrando...');
     const {error:loginError}=await db.auth.signInWithPassword({email:$('login-email').value.trim(),password:$('login-password').value});
     if(loginError){error('login-error','Credenciais incorretas ou acesso indisponível.');setLoading('login-submit',false,'Entrar');return;}
-    const {data,isAdminError,error:adminError}=await db.rpc('is_dock_admin');
+    const {data,error:adminError}=await db.rpc('is_dock_admin');
     if(adminError||!data){await db.auth.signOut();error('login-error','Este usuário não tem permissão para administrar as docas.');setLoading('login-submit',false,'Entrar');return;}
     setLoading('login-submit',false,'Entrar');openAdmin();
   }
+
   async function refreshAdmin() {
     if(isRefreshing)return;
     isRefreshing=true;
@@ -72,12 +117,14 @@
     } catch(err){error('admin-error',cleanError(err));}
     finally{isRefreshing=false;}
   }
+
   async function action(name,params) {
     error('admin-error',null);
     const {error:rpcError}=await db.rpc(name,params);
     if(rpcError){error('admin-error',cleanError(rpcError));return;}
     await refreshAdmin();
   }
+
   function renderAdmin() {
     const tickets=dashboard.tickets||[],docks=dashboard.docks||[];
     const waiting=tickets.filter(t=>t.status==='waiting').sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)||a.number-b.number);
@@ -112,13 +159,16 @@
     }
     renderRows('queue-list',waiting,'waiting');renderRows('active-list',active,'active');renderRows('history-list',done,'history');
   }
+
   function makeQR() {
     const url=new URL(window.location.href);url.search='';url.hash='';
     $('qr-url').textContent=url.href;
     if(window.QRCode){$('qrcode').replaceChildren();new QRCode($('qrcode'),{text:url.href,width:220,height:220,correctLevel:QRCode.CorrectLevel.M});}
     else $('qrcode').textContent='Não foi possível carregar o QR Code. Use o link acima.';
   }
+
   function openAdmin(){history.replaceState(null,'','?admin=1');show('admin');clearTimer();makeQR();refreshAdmin();timer=window.setInterval(refreshAdmin,5000);}
+
   async function boot() {
     if(!ready){show('config');return;}
     db=window.supabase.createClient(cfg.supabaseUrl,cfg.supabaseAnonKey,{auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:false}});
@@ -140,5 +190,6 @@
     if(location.hash==='#acompanhar' && localStorage.getItem(storageKey)){routeToTracking(localStorage.getItem(storageKey));return;}
     show('checkin');
   }
+
   boot().catch(e=>{show('config');$('config-view').querySelector('p').textContent=cleanError(e);});
 })();

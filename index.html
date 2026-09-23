@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#122b3b" />
+  <title>DockFlow | Gestão de docas</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar"><div class="brand"><span class="brand-mark">▥</span><span>Dock<span class="accent">Flow</span></span></div><span id="environment" class="environment">Gestão de docas</span></header>
+  <main class="container">
+    <section id="config-view" class="view hidden"><div class="panel"><h1>Configuração pendente</h1><p>Configure o Supabase em <code>config.js</code> antes de publicar. Consulte o <code>README.md</code>.</p></div></section>
+    <section id="checkin-view" class="view hidden">
+      <div class="hero"><span class="eyebrow">CHECK-IN DIGITAL</span><h1>Chegou para carregar ou descarregar?</h1><p>Informe seus dados para entrar na fila. Você não precisa instalar nenhum aplicativo.</p></div>
+      <div class="panel">
+        <form id="checkin-form" novalidate>
+          <label for="first-name">Nome</label><input id="first-name" name="firstName" autocomplete="given-name" maxlength="60" required placeholder="Ex.: João" />
+          <label for="last-name">Sobrenome</label><input id="last-name" name="lastName" autocomplete="family-name" maxlength="80" required placeholder="Ex.: Silva" />
+          <label for="plate">Placa do veículo</label><input id="plate" name="plate" maxlength="7" minlength="7" autocapitalize="characters" spellcheck="false" required placeholder="ABC1D23" />
+          <small>Placa brasileira antiga (ABC1234) ou Mercosul (ABC1D23).</small>
+          <div id="checkin-error" role="alert" class="message error hidden"></div>
+          <button id="checkin-submit" type="submit" class="button primary">Entrar na fila</button>
+        </form>
+      </div>
+      <p class="muted centered">Já fez check-in neste celular? <a href="#acompanhar" id="resume-link">Acompanhar minha senha</a></p>
+    </section>
+    <section id="tracking-view" class="view hidden">
+      <div class="panel tracking"><span class="eyebrow">SUA SENHA</span><h1 id="ticket-number">—</h1><div id="ticket-status" class="pill">Consultando...</div><p id="ticket-message">Buscando sua posição na fila.</p>
+        <div class="tracking-details"><div><span>Placa</span><strong id="ticket-plate">—</strong></div><div><span>Posição na fila</span><strong id="ticket-position">—</strong></div><div><span>Doca</span><strong id="ticket-dock">—</strong></div></div>
+        <div id="tracking-error" role="alert" class="message error hidden"></div><button class="button secondary" id="tracking-refresh">Atualizar agora</button>
+      </div><p class="muted centered">Mantenha esta página disponível. A chamada aparece aqui quando o operador liberar uma doca.</p>
+    </section>
+    <section id="login-view" class="view hidden"><div class="panel auth-panel"><span class="eyebrow">ÁREA RESTRITA</span><h1>Acesso da logística</h1><p>Entre com o usuário autorizado.</p>
+      <form id="login-form"><label for="login-email">E-mail</label><input id="login-email" type="email" autocomplete="username" required placeholder="logistica@empresa.com"/><label for="login-password">Senha</label><input id="login-password" type="password" autocomplete="current-password" required/><div class="message error hidden" id="login-error" role="alert"></div><button class="button primary" id="login-submit">Entrar</button></form>
+    </div></section>
+    <section id="admin-view" class="view hidden">
+      <div class="admin-head"><div><span class="eyebrow">CENTRAL DE OPERAÇÕES</span><h1>Painel de docas</h1><p id="last-update" class="muted">Atualizando...</p></div><button class="button secondary compact" id="logout">Sair</button></div>
+      <div class="stats"><article class="stat"><span>Aguardando</span><strong id="count-waiting">0</strong></article><article class="stat"><span>Em atendimento</span><strong id="count-active">0</strong></article><article class="stat"><span>Finalizados hoje</span><strong id="count-done">0</strong></article></div>
+      <div id="admin-error" role="alert" class="message error hidden"></div>
+      <section class="panel"><div class="section-heading"><h2>Docas</h2><button id="admin-refresh" class="button secondary compact">Atualizar</button></div><div id="dock-list" class="dock-grid"></div></section>
+      <section class="panel"><h2>Fila de chegada</h2><p class="muted">A chamada respeita a ordem de chegada.</p><div id="queue-list" class="queue-list"></div></section>
+      <section class="panel"><h2>Em atendimento</h2><div id="active-list" class="queue-list"></div></section>
+      <section class="panel"><h2>Histórico de hoje</h2><div id="history-list" class="queue-list"></div></section>
+      <section class="panel"><h2>QR Code para impressão</h2><p class="muted">Imprima e fixe na portaria. O QR Code abre o check-in neste endereço.</p><div class="qr-wrap"><div id="qrcode"></div><p id="qr-url" class="muted small"></p></div><button class="button secondary" id="print-qr">Imprimir QR Code</button></section>
+    </section>
+  </main><footer>DockFlow · Check-in e gestão de filas</footer>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script src="config.js"></script><script src="app.js"></script>
+</body>
+</html>

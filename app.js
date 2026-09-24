@@ -11,6 +11,8 @@
   let adminAudioContext = null;
   const adminKnownWaitingIds = new Set();
   const storageKey = 'dockflow_tracking_token';
+  const pushEnabledKey = 'dockflow_driver_push_enabled';
+  const VAPID_PUBLIC_KEY = 'BBTmkscLo3MjwNDIl0hXR-PxOfDObQ8IUWQpZ8Sqb8EW8cMsUIWBIXFoNXwsJlx3kWznBpx-jTRKLh_dJmmCw-0';
   const viewNames = ['config', 'checkin', 'tracking', 'login', 'admin'];
   const show = name => viewNames.forEach(v => $(`${v}-view`).classList.toggle('hidden', v !== name));
   const error = (id, message) => { $(id).textContent = message || ''; $(id).classList.toggle('hidden', !message); };
@@ -152,6 +154,159 @@
     newTickets.forEach(notifyAdminNewCheckin);
   }
 
+  function isIOSDevice() {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+
+  function isStandaloneMode() {
+    return window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
+  }
+
+  function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = atob(base64);
+    return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
+  }
+
+  function updateDriverPushUI(state, message) {
+    const box = $('push-box'), btn = $('push-enable'), help = $('push-help');
+    if (!box || !btn || !help) return;
+    box.classList.remove('push-on','push-warning');
+    if (state === 'on') {
+      box.classList.add('push-on');
+      btn.textContent = 'Avisos de chamada ativados';
+      btn.disabled = true;
+      help.textContent = message || 'Você receberá uma notificação quando a doca for liberada, mesmo com o site em segundo plano.';
+    } else if (state === 'ios-install') {
+      box.classList.add('push-warning');
+      btn.textContent = 'Como ativar no iPhone';
+      btn.disabled = false;
+      help.textContent = message || 'No iPhone, primeiro adicione o DockFlow à Tela de Início. Depois abra pelo ícone e ative os avisos.';
+    } else if (state === 'unsupported') {
+      box.classList.add('push-warning');
+      btn.textContent = 'Notificação indisponível';
+      btn.disabled = true;
+      help.textContent = message || 'Este navegador não oferece notificações push. Mantenha a página disponível para acompanhar a chamada.';
+    } else if (state === 'denied') {
+      box.classList.add('push-warning');
+      btn.textContent = 'Notificações bloqueadas';
+      btn.disabled = true;
+      help.textContent = message || 'As notificações estão bloqueadas neste navegador. Libere-as nas configurações do site.';
+    } else {
+      btn.textContent = 'Ativar aviso mesmo com o site minimizado';
+      btn.disabled = false;
+      help.textContent = message || 'Recomendado: ative para receber um alerta do celular quando for chamado.';
+    }
+  }
+
+  async function registerPushWorker() {
+    if (!('serviceWorker' in navigator)) return null;
+    return navigator.serviceWorker.register('./service-worker.js', { scope: './' });
+  }
+
+  async function savePushSubscription(token, subscription) {
+    const json = subscription.toJSON();
+    const keys = json.keys || {};
+    if (!json.endpoint || !keys.p256dh || !keys.auth) throw new Error('Assinatura de notificação incompleta.');
+    const { error: rpcError } = await db.rpc('driver_save_push_subscription', {
+      p_token: token,
+      p_endpoint: json.endpoint,
+      p_p256dh: keys.p256dh,
+      p_auth: keys.auth
+    });
+    if (rpcError) throw rpcError;
+  }
+
+  async function syncExistingDriverPush(token) {
+    if (!$('push-box')) return;
+    if (isIOSDevice() && !isStandaloneMode()) {
+      updateDriverPushUI('ios-install');
+      return;
+    }
+    if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) {
+      updateDriverPushUI('unsupported');
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      updateDriverPushUI('denied');
+      return;
+    }
+    try {
+      const registration = await registerPushWorker();
+      const subscription = await registration?.pushManager.getSubscription();
+      if (subscription && Notification.permission === 'granted') {
+        await savePushSubscription(token, subscription);
+        localStorage.setItem(pushEnabledKey, '1');
+        updateDriverPushUI('on');
+      } else {
+        updateDriverPushUI('off');
+      }
+    } catch (_) {
+      updateDriverPushUI('off', 'Ative os avisos para receber a chamada mesmo com o site minimizado.');
+    }
+  }
+
+  async function enableDriverPush() {
+    const token = new URLSearchParams(location.search).get('ticket') || localStorage.getItem(storageKey);
+    if (!token) return;
+    if (isIOSDevice() && !isStandaloneMode()) {
+      updateDriverPushUI('ios-install', 'No iPhone: toque em Compartilhar → Adicionar à Tela de Início. Abra o DockFlow pelo novo ícone e toque novamente para ativar os avisos.');
+      return;
+    }
+    if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) {
+      updateDriverPushUI('unsupported');
+      return;
+    }
+    const btn = $('push-enable');
+    if (btn) { btn.disabled = true; btn.textContent = 'Ativando...'; }
+    try {
+      const registration = await registerPushWorker();
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        updateDriverPushUI(permission === 'denied' ? 'denied' : 'off');
+        return;
+      }
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+        });
+      }
+      await savePushSubscription(token, subscription);
+      localStorage.setItem(pushEnabledKey, '1');
+      updateDriverPushUI('on');
+      try {
+        registration.showNotification('DockFlow', {
+          body: 'Avisos ativados. Você será notificado quando for chamado para uma doca.',
+          tag: 'dockflow-enabled',
+          icon: './icon-192.png'
+        });
+      } catch (_) {}
+    } catch (err) {
+      updateDriverPushUI('off', cleanError(err));
+    }
+  }
+
+  async function callNext(dockId) {
+    error('admin-error', null);
+    const { data, error: rpcError } = await db.rpc('admin_call_next', { p_dock_id: dockId });
+    if (rpcError) { error('admin-error', cleanError(rpcError)); return; }
+    try {
+      const baseUrl = `${location.origin}${location.pathname}`;
+      const { error: pushError } = await db.functions.invoke('notify-driver', {
+        body: { ticket_id: data.ticket_id, dock: data.dock, app_url: baseUrl }
+      });
+      if (pushError) throw pushError;
+    } catch (_) {
+      // O motorista continua sendo chamado normalmente pela tela; push é um reforço.
+      const toastTicket = {number:data.number,first_name:'Motorista',last_name:'',plate:data.plate};
+      showAdminToast(toastTicket, false);
+    }
+    await refreshAdmin();
+  }
+
   function announceCall(dock) {
     if (navigator.vibrate) {
       try { navigator.vibrate([500, 180, 500, 180, 900]); } catch (_) {}
@@ -191,6 +346,7 @@
     localStorage.setItem(storageKey,token);
     history.replaceState(null,'',`?ticket=${encodeURIComponent(token)}`);
     show('tracking'); clearTimer(); lastTrackingStatus = null; refreshTracking(token);
+    syncExistingDriverPush(token);
     timer=window.setInterval(()=>refreshTracking(token),8000);
   }
 
@@ -271,7 +427,7 @@
       const block=element('article',`dock ${current?'busy':''}`),head=element('div','dock-title');
       head.append(element('span','',d.name),element('span','',!d.enabled?'Inativa':current?'Ocupada':'Livre'));block.append(head);
       block.append(element('p','',current?`${current.plate} · ${current.first_name} ${current.last_name}`:'Pronta para receber o próximo motorista'));
-      if(d.enabled && !current) block.append(button('Chamar próximo',()=>action('admin_call_next',{p_dock_id:d.id}),'primary'));
+      if(d.enabled && !current) block.append(button('Chamar próximo',()=>callNext(d.id),'primary'));
       if(current)block.append(button('Concluir atendimento',()=>action('admin_finish',{p_ticket_id:current.id}),'primary'));
       $('dock-list').append(block);
     });
@@ -304,9 +460,11 @@
   async function boot() {
     if(!ready){show('config');return;}
     db=window.supabase.createClient(cfg.supabaseUrl,cfg.supabaseAnonKey,{auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:false}});
+    registerPushWorker().catch(()=>{});
     $('checkin-form').addEventListener('submit',checkIn);
     $('plate').addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,7);});
     $('tracking-refresh').addEventListener('click',()=>{const token=new URLSearchParams(location.search).get('ticket')||localStorage.getItem(storageKey);if(token)refreshTracking(token);});
+    $('push-enable')?.addEventListener('click', enableDriverPush);
     $('resume-link').addEventListener('click',e=>{e.preventDefault();const token=localStorage.getItem(storageKey);if(token)routeToTracking(token);else error('checkin-error','Não encontramos uma senha salva neste celular. Se já fez check-in, use o link da sua senha.');});
     $('login-form').addEventListener('submit',login);
     $('admin-refresh').addEventListener('click',refreshAdmin);

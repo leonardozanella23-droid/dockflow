@@ -31,3 +31,10 @@
 .admin-alert-close{position:absolute;top:8px;right:10px;border:0;background:transparent;color:#d9e7ec;font-size:26px;line-height:1;cursor:pointer;padding:4px 8px}
 .admin-alert-close:hover{color:#fff}
 @media(max-width:600px){.admin-head{align-items:flex-start}.admin-actions{max-width:50%;gap:6px}.admin-checkin-alert{top:12px;right:12px;width:calc(100vw - 24px)}}
+
+
+/* PUSH DO MOTORISTA */
+.push-box{margin:18px 0;padding:16px;border:1px solid #dce7eb;border-radius:13px;background:#f7fafb;text-align:left}
+.push-box .button{width:100%}.push-box p{margin:9px 2px 0;line-height:1.45}
+.push-box.push-on{background:#eafaf3;border-color:#b9ead6}.push-box.push-on p{color:#147454}.push-box.push-warning{background:#fff8e9;border-color:#efd9a6}.push-box.push-warning p{color:#84611d}
+#tracking-view.called-screen .push-box{display:none}

@@ -45,7 +45,7 @@
       <div class="stats"><article class="stat"><span>Aguardando</span><strong id="count-waiting">0</strong></article><article class="stat"><span>Em atendimento</span><strong id="count-active">0</strong></article><article class="stat"><span>Finalizados hoje</span><strong id="count-done">0</strong></article></div>
       <div id="admin-error" role="alert" class="message error hidden"></div>
       <section class="panel"><div class="section-heading"><h2>Docas</h2><button id="admin-refresh" class="button secondary compact">Atualizar</button></div><div id="dock-list" class="dock-grid"></div></section>
-      <section class="panel"><h2>Fila de chegada</h2><p class="muted">A chamada respeita a ordem de chegada.</p><div id="queue-list" class="queue-list"></div></section>
+      <section class="panel"><h2>Fila de chegada</h2><p class="muted">A ordem pode ser alterada manualmente pelo administrador.</p><div id="queue-list" class="queue-list"></div></section>
       <section class="panel"><h2>Em atendimento</h2><div id="active-list" class="queue-list"></div></section>
       <section class="panel"><h2>Histórico de hoje</h2><div id="history-list" class="queue-list"></div></section>
       <section class="panel"><h2>QR Code para impressão</h2><p class="muted">Imprima e fixe na portaria. O QR Code abre o check-in neste endereço.</p><div class="qr-wrap"><div id="qrcode"></div><p id="qr-url" class="muted small"></p></div><button class="button secondary" id="print-qr">Imprimir QR Code</button></section>
@@ -53,6 +53,6 @@
   </main><footer>DockFlow · Check-in e gestão de filas</footer>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-  <script src="config.js"></script><script src="app.js"></script><script src="historico.js"></script><script src="alerta-sonoro.js"></script>
+  <script src="config.js"></script><script src="app.js"></script><script src="historico.js"></script><script src="alerta-sonoro.js"></script><script src="ordem-fila.js"></script>
 </body>
 </html>
